@@ -25,6 +25,11 @@ from aumos_shadow_ai_toolkit.core.interfaces import (
     IMigrationRepository,
     INetworkScannerAdapter,
     IScanResultRepository,
+    IShadowAIRiskScorer,
+    IShadowAIReportGenerator,
+    IShadowComplianceChecker,
+    IShadowCostEstimator,
+    IShadowUsageAnalytics,
     IUsageMetricRepository,
 )
 from aumos_shadow_ai_toolkit.core.models import (
@@ -799,3 +804,331 @@ class DashboardService:
         )
 
         return stats
+
+
+class ShadowAnalyticsService:
+    """Orchestrate shadow AI usage analytics across the enterprise portfolio.
+
+    Aggregates and exposes usage patterns, cost exposure, and compliance posture
+    for all discovered shadow AI tools in a tenant's environment.
+
+    Wires together IShadowUsageAnalytics, IShadowCostEstimator, and
+    IShadowAIRiskScorer to produce combined analytics payloads.
+    """
+
+    def __init__(
+        self,
+        usage_analytics: IShadowUsageAnalytics,
+        cost_estimator: IShadowCostEstimator,
+        risk_scorer: IShadowAIRiskScorer,
+        discovery_repo: IDiscoveryRepository,
+    ) -> None:
+        """Initialise with injected dependencies.
+
+        Args:
+            usage_analytics: Shadow AI usage analytics adapter.
+            cost_estimator: Shadow AI cost estimation adapter.
+            risk_scorer: Shadow AI risk scoring adapter.
+            discovery_repo: ShadowAIDiscovery persistence.
+        """
+        self._usage = usage_analytics
+        self._costs = cost_estimator
+        self._scorer = risk_scorer
+        self._discoveries = discovery_repo
+
+    async def get_usage_dashboard(
+        self,
+        tenant_id: uuid.UUID,
+        days: int = 30,
+    ) -> dict[str, Any]:
+        """Return a combined usage analytics dashboard payload.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            days: Reporting window in days.
+
+        Returns:
+            Combined dashboard dict with usage, adoption, and trend data.
+        """
+        dashboard_data = await self._usage.get_dashboard_data(
+            tenant_id=tenant_id,
+            days=days,
+        )
+
+        logger.info(
+            "Shadow AI usage dashboard retrieved",
+            tenant_id=str(tenant_id),
+            days=days,
+        )
+
+        return dashboard_data
+
+    async def get_cost_exposure(
+        self,
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Return cost exposure analysis for all shadow tools in the tenant's portfolio.
+
+        Fetches all active discoveries, estimates their shadow tool costs, and
+        identifies the highest-value migration savings opportunities.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+
+        Returns:
+            Cost exposure dict with per-tool estimates and savings opportunities.
+        """
+        discoveries_list, total = await self._discoveries.list_by_tenant(
+            tenant_id=tenant_id,
+            page=1,
+            page_size=500,
+            status=None,
+            risk_level=None,
+        )
+
+        discovery_dicts = [
+            {
+                "discovery_id": str(d.id),
+                "tool_name": d.tool_name,
+                "api_endpoint": d.api_endpoint,
+                "request_count": d.request_count,
+                "estimated_volume_kb": d.estimated_data_volume_kb,
+                "risk_level": d.risk_level,
+            }
+            for d in discoveries_list
+        ]
+
+        opportunities = await self._costs.identify_savings_opportunities(
+            tenant_id=tenant_id,
+            discoveries=discovery_dicts,
+        )
+
+        logger.info(
+            "Shadow AI cost exposure computed",
+            tenant_id=str(tenant_id),
+            discovery_count=total,
+            opportunity_count=len(opportunities),
+        )
+
+        return {
+            "tenant_id": str(tenant_id),
+            "discovery_count": total,
+            "savings_opportunities": opportunities,
+            "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        }
+
+    async def score_portfolio(
+        self,
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Batch-score all active discoveries in the tenant's shadow AI portfolio.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+
+        Returns:
+            Portfolio scoring result with per-discovery scores and aggregate stats.
+        """
+        discoveries_list, total = await self._discoveries.list_by_tenant(
+            tenant_id=tenant_id,
+            page=1,
+            page_size=500,
+            status=None,
+            risk_level=None,
+        )
+
+        discovery_dicts = [
+            {
+                "discovery_id": str(d.id),
+                "tool_name": d.tool_name,
+                "api_endpoint": d.api_endpoint,
+                "data_types": getattr(d, "data_types", []),
+                "compliance_frameworks": getattr(d, "compliance_exposure", []),
+                "request_count": d.request_count,
+                "estimated_volume_kb": d.estimated_data_volume_kb,
+            }
+            for d in discoveries_list
+        ]
+
+        scored = await self._scorer.score_batch(discoveries=discovery_dicts)
+
+        risk_counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for result in scored:
+            level = result.get("risk_level", "low")
+            risk_counts[level] = risk_counts.get(level, 0) + 1
+
+        logger.info(
+            "Shadow AI portfolio scored",
+            tenant_id=str(tenant_id),
+            discovery_count=total,
+            critical_count=risk_counts.get("critical", 0),
+        )
+
+        return {
+            "tenant_id": str(tenant_id),
+            "total_discoveries": total,
+            "risk_distribution": risk_counts,
+            "scored_discoveries": scored,
+            "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        }
+
+
+class ShadowComplianceService:
+    """Manage compliance assessments and reports for shadow AI discoveries.
+
+    Coordinates IShadowComplianceChecker and IShadowAIReportGenerator to
+    produce regulatory compliance assessments and formatted reports.
+    """
+
+    def __init__(
+        self,
+        compliance_checker: IShadowComplianceChecker,
+        report_generator: IShadowAIReportGenerator,
+        discovery_repo: IDiscoveryRepository,
+    ) -> None:
+        """Initialise with injected dependencies.
+
+        Args:
+            compliance_checker: Shadow AI compliance assessment adapter.
+            report_generator: Shadow AI report generation adapter.
+            discovery_repo: ShadowAIDiscovery persistence.
+        """
+        self._checker = compliance_checker
+        self._reporter = report_generator
+        self._discoveries = discovery_repo
+
+    async def assess_discovery_compliance(
+        self,
+        discovery_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Run a compliance assessment on a specific discovery.
+
+        Args:
+            discovery_id: Discovery UUID to assess.
+            tenant_id: Requesting tenant UUID.
+
+        Returns:
+            Compliance assessment dict with framework violations and remediations.
+
+        Raises:
+            NotFoundError: If discovery not found.
+        """
+        discovery = await self._discoveries.get_by_id(discovery_id, tenant_id)
+        if discovery is None:
+            raise NotFoundError(
+                message=f"Shadow AI discovery {discovery_id} not found.",
+                error_code=ErrorCode.NOT_FOUND,
+            )
+
+        assessment = await self._checker.assess_discovery(
+            discovery_id=discovery_id,
+            tool_name=discovery.tool_name,
+            api_endpoint=discovery.api_endpoint,
+            data_types=getattr(discovery, "data_types", []),
+            tenant_id=tenant_id,
+        )
+
+        logger.info(
+            "Discovery compliance assessed",
+            discovery_id=str(discovery_id),
+            tenant_id=str(tenant_id),
+            violation_count=len(assessment.get("violations", [])),
+        )
+
+        return assessment
+
+    async def generate_portfolio_compliance_report(
+        self,
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Generate a full portfolio compliance report for the tenant.
+
+        Fetches all active discoveries and produces a consolidated compliance
+        report with aggregate violations, remediations, and a compliance score.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+
+        Returns:
+            Compliance report dict with aggregate violations and recommendations.
+        """
+        discoveries_list, total = await self._discoveries.list_by_tenant(
+            tenant_id=tenant_id,
+            page=1,
+            page_size=500,
+            status=None,
+            risk_level=None,
+        )
+
+        discovery_dicts = [
+            {
+                "discovery_id": str(d.id),
+                "tool_name": d.tool_name,
+                "api_endpoint": d.api_endpoint,
+                "data_types": getattr(d, "data_types", []),
+                "risk_level": d.risk_level,
+                "compliance_exposure": getattr(d, "compliance_exposure", []),
+            }
+            for d in discoveries_list
+        ]
+
+        report = await self._checker.generate_compliance_report(
+            tenant_id=tenant_id,
+            discoveries=discovery_dicts,
+        )
+
+        logger.info(
+            "Portfolio compliance report generated",
+            tenant_id=str(tenant_id),
+            discovery_count=total,
+        )
+
+        return report
+
+    async def generate_executive_report(
+        self,
+        tenant_id: uuid.UUID,
+        migration_plans: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Generate an executive-level shadow AI risk and compliance summary.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            migration_plans: Optional list of migration plan dicts to include.
+
+        Returns:
+            Executive summary dict combining risk and compliance highlights.
+        """
+        discoveries_list, _ = await self._discoveries.list_by_tenant(
+            tenant_id=tenant_id,
+            page=1,
+            page_size=500,
+            status=None,
+            risk_level=None,
+        )
+
+        discovery_dicts = [
+            {
+                "discovery_id": str(d.id),
+                "tool_name": d.tool_name,
+                "risk_score": d.risk_score,
+                "risk_level": d.risk_level,
+                "compliance_exposure": getattr(d, "compliance_exposure", []),
+            }
+            for d in discoveries_list
+        ]
+
+        summary = await self._reporter.generate_executive_summary(
+            tenant_id=tenant_id,
+            discoveries=discovery_dicts,
+            migration_plans=migration_plans or [],
+        )
+
+        logger.info(
+            "Executive report generated",
+            tenant_id=str(tenant_id),
+            discovery_count=len(discovery_dicts),
+        )
+
+        return summary

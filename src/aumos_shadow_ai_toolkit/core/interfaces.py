@@ -8,6 +8,10 @@ import uuid
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+# ---------------------------------------------------------------------------
+# NEW: Adapter interface protocols added for domain-specific adapters
+# ---------------------------------------------------------------------------
+
 from aumos_shadow_ai_toolkit.core.models import (
     MigrationPlan,
     ScanResult,
@@ -424,5 +428,311 @@ class IGovernanceEngineAdapter(Protocol):
         Returns:
             Risk assessment dict:
             {risk_score, risk_level, data_sensitivity, compliance_exposure, details}
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Domain-specific adapter protocols
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class IShadowAIRiskScorer(Protocol):
+    """Interface for the composite risk scoring adapter."""
+
+    async def score_discovery(
+        self,
+        discovery_id: uuid.UUID,
+        tool_name: str,
+        api_endpoint: str,
+        data_types: list[str],
+        compliance_frameworks: list[str],
+        request_count: int,
+        estimated_volume_kb: int,
+    ) -> dict[str, Any]:
+        """Compute a composite risk score for a shadow AI discovery.
+
+        Args:
+            discovery_id: Discovery UUID being scored.
+            tool_name: Name of the detected AI tool.
+            api_endpoint: Detected API endpoint domain.
+            data_types: List of inferred data type categories.
+            compliance_frameworks: Applicable compliance frameworks (GDPR, HIPAA, etc.).
+            request_count: Total detected request count.
+            estimated_volume_kb: Estimated data volume in kilobytes.
+
+        Returns:
+            Risk score dict with composite_score, risk_level, and dimension breakdown.
+        """
+        ...
+
+    async def score_batch(
+        self,
+        discoveries: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Score multiple discoveries in a single pass.
+
+        Args:
+            discoveries: List of discovery attribute dicts (same keys as score_discovery).
+
+        Returns:
+            List of risk score dicts in the same order as input.
+        """
+        ...
+
+    async def get_tool_risk_breakdown(
+        self,
+        tool_name: str,
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Return aggregated risk breakdown for a tool across a tenant's discoveries.
+
+        Args:
+            tool_name: AI tool name.
+            tenant_id: Scoping tenant UUID.
+
+        Returns:
+            Aggregated risk breakdown dict with dimension scores and discovery count.
+        """
+        ...
+
+
+@runtime_checkable
+class IShadowAIReportGenerator(Protocol):
+    """Interface for generating executive and operational compliance reports."""
+
+    async def generate_executive_summary(
+        self,
+        tenant_id: uuid.UUID,
+        discoveries: list[dict[str, Any]],
+        migration_plans: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Generate an executive-level shadow AI risk summary.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            discoveries: List of discovery data dicts.
+            migration_plans: List of migration plan data dicts.
+
+        Returns:
+            Executive summary dict with risk highlights and cost exposure.
+        """
+        ...
+
+    async def generate_discovery_report(
+        self,
+        tenant_id: uuid.UUID,
+        discoveries: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Generate a detailed per-tool discovery findings report.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            discoveries: List of discovery data dicts.
+
+        Returns:
+            Discovery report dict with per-tool findings and risk details.
+        """
+        ...
+
+    async def export_as_json(
+        self,
+        tenant_id: uuid.UUID,
+        report_type: str,
+    ) -> str:
+        """Export a report as a JSON string.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            report_type: Report type identifier (executive | discovery | migration).
+
+        Returns:
+            JSON-serialized report string.
+        """
+        ...
+
+
+@runtime_checkable
+class IShadowUsageAnalytics(Protocol):
+    """Interface for shadow AI usage analytics computations."""
+
+    async def get_api_call_volume(
+        self,
+        tenant_id: uuid.UUID,
+        days: int,
+    ) -> dict[str, Any]:
+        """Return API call volume metrics for the specified window.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            days: Reporting window in days.
+
+        Returns:
+            Volume metrics dict with daily breakdown and top tools.
+        """
+        ...
+
+    async def get_user_adoption_patterns(
+        self,
+        tenant_id: uuid.UUID,
+        days: int,
+    ) -> dict[str, Any]:
+        """Return user adoption patterns for shadow AI tools.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            days: Reporting window in days.
+
+        Returns:
+            Adoption pattern dict with per-tool user counts and growth trends.
+        """
+        ...
+
+    async def get_department_aggregation(
+        self,
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Return shadow AI usage aggregated by department.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+
+        Returns:
+            Department aggregation dict with usage counts and risk exposure.
+        """
+        ...
+
+    async def get_dashboard_data(
+        self,
+        tenant_id: uuid.UUID,
+        days: int,
+    ) -> dict[str, Any]:
+        """Return a combined analytics payload for the usage dashboard.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            days: Reporting window in days.
+
+        Returns:
+            Dashboard data dict combining volume, adoption, trends, and departments.
+        """
+        ...
+
+
+@runtime_checkable
+class IShadowCostEstimator(Protocol):
+    """Interface for shadow AI tool cost estimation and TCO comparison."""
+
+    async def estimate_shadow_tool_cost(
+        self,
+        tool_name: str,
+        user_count: int,
+        monthly_api_calls: int,
+    ) -> dict[str, Any]:
+        """Estimate the annual cost of a shadow AI tool deployment.
+
+        Args:
+            tool_name: Name of the shadow AI tool.
+            user_count: Number of detected users.
+            monthly_api_calls: Estimated monthly API call volume.
+
+        Returns:
+            Shadow tool cost estimate dict with licensing, API, and hidden costs.
+        """
+        ...
+
+    async def compute_tco_comparison(
+        self,
+        tool_name: str,
+        managed_alternative: str,
+        user_count: int,
+        monthly_api_calls: int,
+    ) -> dict[str, Any]:
+        """Compute a 3-year TCO comparison between shadow and managed alternatives.
+
+        Args:
+            tool_name: Shadow AI tool name.
+            managed_alternative: Managed alternative name.
+            user_count: Number of users.
+            monthly_api_calls: Monthly API call volume.
+
+        Returns:
+            TCO comparison dict with year-over-year cost projections and savings.
+        """
+        ...
+
+    async def identify_savings_opportunities(
+        self,
+        tenant_id: uuid.UUID,
+        discoveries: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Identify the highest-value savings opportunities across all shadow tools.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            discoveries: List of discovery data dicts.
+
+        Returns:
+            Prioritized list of savings opportunity dicts.
+        """
+        ...
+
+
+@runtime_checkable
+class IShadowComplianceChecker(Protocol):
+    """Interface for shadow AI regulatory and policy compliance assessment."""
+
+    async def assess_discovery(
+        self,
+        discovery_id: uuid.UUID,
+        tool_name: str,
+        api_endpoint: str,
+        data_types: list[str],
+        tenant_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Assess the compliance risk for a single shadow AI discovery.
+
+        Args:
+            discovery_id: Discovery UUID being assessed.
+            tool_name: AI tool name.
+            api_endpoint: Detected API endpoint domain.
+            data_types: Inferred data type categories.
+            tenant_id: Requesting tenant UUID.
+
+        Returns:
+            Compliance assessment dict with framework violations and remediations.
+        """
+        ...
+
+    async def check_framework_mapping(
+        self,
+        data_types: list[str],
+        applicable_frameworks: list[str],
+    ) -> dict[str, Any]:
+        """Map data types and tool usage to regulatory framework violations.
+
+        Args:
+            data_types: List of data type categories.
+            applicable_frameworks: Frameworks to evaluate (GDPR, HIPAA, SOX, etc.).
+
+        Returns:
+            Framework mapping dict with violation severity per framework.
+        """
+        ...
+
+    async def generate_compliance_report(
+        self,
+        tenant_id: uuid.UUID,
+        discoveries: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Generate a portfolio-level compliance report for all shadow discoveries.
+
+        Args:
+            tenant_id: Requesting tenant UUID.
+            discoveries: List of discovery data dicts.
+
+        Returns:
+            Compliance report dict with aggregate violations, remediations, and scores.
         """
         ...
