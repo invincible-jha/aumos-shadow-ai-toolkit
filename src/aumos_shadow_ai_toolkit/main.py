@@ -12,6 +12,7 @@ from aumos_common.observability import get_logger
 
 from aumos_shadow_ai_toolkit.adapters.kafka import ShadowAIEventPublisher
 from aumos_shadow_ai_toolkit.api.router import router
+from aumos_shadow_ai_toolkit.api.routes.shadow_ai import router as shadow_ai_detection_router
 from aumos_shadow_ai_toolkit.settings import Settings
 
 logger = get_logger(__name__)
@@ -72,3 +73,4 @@ app: FastAPI = create_app(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(shadow_ai_detection_router, prefix="/api/v1")

@@ -146,6 +146,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
     async def update_status(
         self,
         discovery_id: uuid.UUID,
+        tenant_id: uuid.UUID,
         status: str,
         dismissed_reason: str | None,
     ) -> ShadowAIDiscovery:
@@ -153,13 +154,14 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
 
         Args:
             discovery_id: Discovery UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             status: New status value.
             dismissed_reason: Reason if status is dismissed.
 
         Returns:
             Updated ShadowAIDiscovery.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             values: dict[str, Any] = {
                 "status": status,
                 "updated_at": datetime.now(tz=timezone.utc),
@@ -182,6 +184,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
     async def update_risk_assessment(
         self,
         discovery_id: uuid.UUID,
+        tenant_id: uuid.UUID,
         risk_score: float,
         risk_level: str,
         data_sensitivity: str,
@@ -192,6 +195,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
 
         Args:
             discovery_id: Discovery UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             risk_score: Composite risk score (0.0–1.0).
             risk_level: Severity string.
             data_sensitivity: Estimated data sensitivity category.
@@ -201,7 +205,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
         Returns:
             Updated ShadowAIDiscovery with risk data.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             await session.execute(
                 update(ShadowAIDiscovery)
                 .where(ShadowAIDiscovery.id == discovery_id)
@@ -253,6 +257,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
     async def increment_request_count(
         self,
         discovery_id: uuid.UUID,
+        tenant_id: uuid.UUID,
         request_count_delta: int,
         estimated_volume_kb_delta: int,
         last_seen_at: datetime,
@@ -261,6 +266,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
 
         Args:
             discovery_id: Discovery UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             request_count_delta: Number of new requests detected.
             estimated_volume_kb_delta: Additional estimated data volume in KB.
             last_seen_at: Timestamp of the latest detection.
@@ -268,7 +274,7 @@ class DiscoveryRepository(BaseRepository[ShadowAIDiscovery], IDiscoveryRepositor
         Returns:
             Updated ShadowAIDiscovery with incremented counters.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             await session.execute(
                 update(ShadowAIDiscovery)
                 .where(ShadowAIDiscovery.id == discovery_id)
@@ -382,6 +388,7 @@ class MigrationRepository(BaseRepository[MigrationPlan], IMigrationRepository):
     async def update_status(
         self,
         plan_id: uuid.UUID,
+        tenant_id: uuid.UUID,
         status: str,
         completed_at: datetime | None,
         notes: str | None,
@@ -390,6 +397,7 @@ class MigrationRepository(BaseRepository[MigrationPlan], IMigrationRepository):
 
         Args:
             plan_id: MigrationPlan UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             status: New status value.
             completed_at: Optional completion timestamp.
             notes: Optional free-text notes.
@@ -397,7 +405,7 @@ class MigrationRepository(BaseRepository[MigrationPlan], IMigrationRepository):
         Returns:
             Updated MigrationPlan.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             values: dict[str, Any] = {
                 "status": status,
                 "updated_at": datetime.now(tz=timezone.utc),
@@ -420,15 +428,19 @@ class MigrationRepository(BaseRepository[MigrationPlan], IMigrationRepository):
             return result.scalar_one()
 
     async def set_approval_workflow_id(
-        self, plan_id: uuid.UUID, approval_workflow_id: uuid.UUID
+        self,
+        plan_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        approval_workflow_id: uuid.UUID,
     ) -> None:
         """Set the approval workflow ID after migration approval is initiated.
 
         Args:
             plan_id: MigrationPlan UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             approval_workflow_id: Approval workflow UUID from aumos-approval-workflow.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             await session.execute(
                 update(MigrationPlan)
                 .where(MigrationPlan.id == plan_id)
@@ -477,6 +489,7 @@ class ScanResultRepository(BaseRepository[ScanResult], IScanResultRepository):
     async def complete(
         self,
         scan_id: uuid.UUID,
+        tenant_id: uuid.UUID,
         new_discoveries_count: int,
         total_endpoints_checked: int,
         duration_seconds: int,
@@ -485,6 +498,7 @@ class ScanResultRepository(BaseRepository[ScanResult], IScanResultRepository):
 
         Args:
             scan_id: ScanResult UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             new_discoveries_count: Number of new discoveries found.
             total_endpoints_checked: Total endpoints scanned.
             duration_seconds: Scan duration in seconds.
@@ -492,7 +506,7 @@ class ScanResultRepository(BaseRepository[ScanResult], IScanResultRepository):
         Returns:
             Updated ScanResult with status=completed.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             now = datetime.now(tz=timezone.utc)
             await session.execute(
                 update(ScanResult)
@@ -514,18 +528,22 @@ class ScanResultRepository(BaseRepository[ScanResult], IScanResultRepository):
             return result.scalar_one()
 
     async def fail(
-        self, scan_id: uuid.UUID, error_message: str
+        self,
+        scan_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        error_message: str,
     ) -> ScanResult:
         """Mark a scan as failed with an error message.
 
         Args:
             scan_id: ScanResult UUID.
+            tenant_id: Owning tenant UUID for RLS enforcement.
             error_message: Error detail.
 
         Returns:
             Updated ScanResult with status=failed.
         """
-        async with get_db_session() as session:
+        async with get_db_session(tenant_id) as session:
             now = datetime.now(tz=timezone.utc)
             await session.execute(
                 update(ScanResult)

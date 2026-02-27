@@ -9,9 +9,11 @@ Business logic is never implemented here — routes delegate entirely to service
 
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status  # Request used in service-factory deps
 
+from aumos_common.auth import TenantContext, get_current_tenant
 from aumos_common.errors import ConflictError, NotFoundError
 from aumos_common.observability import get_logger
 
@@ -94,23 +96,6 @@ def _get_dashboard_service(request: Request) -> DashboardService:
     return request.app.state.dashboard_service  # type: ignore[no-any-return]
 
 
-def _tenant_id_from_request(request: Request) -> uuid.UUID:
-    """Extract tenant UUID from request headers (set by auth middleware).
-
-    Falls back to a random UUID in development mode.
-
-    Args:
-        request: Incoming FastAPI request.
-
-    Returns:
-        Tenant UUID.
-    """
-    tenant_header = request.headers.get("X-Tenant-ID")
-    if tenant_header:
-        return uuid.UUID(tenant_header)
-    return uuid.uuid4()
-
-
 # ---------------------------------------------------------------------------
 # Scan endpoints
 # ---------------------------------------------------------------------------
@@ -129,20 +114,20 @@ def _tenant_id_from_request(request: Request) -> uuid.UUID:
 )
 async def initiate_scan(
     request_body: ScanInitiateRequest,
-    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     service: DiscoveryService = Depends(_get_discovery_service),
 ) -> ScanResultResponse:
     """Initiate a network scan for shadow AI tool detection.
 
     Args:
         request_body: Scan parameters.
-        request: FastAPI request for tenant extraction.
+        tenant: Authenticated tenant context from JWT.
         service: DiscoveryService dependency.
 
     Returns:
         ScanResultResponse with the completed scan result.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
 
     try:
         scan = await service.initiate_scan(
@@ -172,27 +157,27 @@ async def initiate_scan(
     description="List all detected shadow AI tools for the current tenant with pagination.",
 )
 async def list_discoveries(
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     page: int = 1,
     page_size: int = 20,
     status_filter: str | None = None,
     risk_level: str | None = None,
-    request: Request = ...,  # type: ignore[assignment]
     service: DiscoveryService = Depends(_get_discovery_service),
 ) -> DiscoveryListResponse:
     """List shadow AI discoveries for the current tenant.
 
     Args:
+        tenant: Authenticated tenant context from JWT.
         page: 1-based page number (default 1).
         page_size: Results per page (default 20, max 100).
         status_filter: Optional status to filter by.
         risk_level: Optional risk level to filter by.
-        request: FastAPI request for tenant extraction.
         service: DiscoveryService dependency.
 
     Returns:
         DiscoveryListResponse with pagination metadata.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
     discoveries, total = await service.list_discoveries(
         tenant_id=tenant_id,
         page=page,
@@ -217,14 +202,14 @@ async def list_discoveries(
 )
 async def get_discovery(
     discovery_id: uuid.UUID,
-    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     service: DiscoveryService = Depends(_get_discovery_service),
 ) -> ShadowAIDiscoveryResponse:
     """Retrieve a single shadow AI discovery.
 
     Args:
         discovery_id: Discovery UUID.
-        request: FastAPI request for tenant extraction.
+        tenant: Authenticated tenant context from JWT.
         service: DiscoveryService dependency.
 
     Returns:
@@ -233,7 +218,7 @@ async def get_discovery(
     Raises:
         HTTPException 404: If discovery not found.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
 
     try:
         discovery = await service.get_discovery(discovery_id, tenant_id)
@@ -251,7 +236,7 @@ async def get_discovery(
 )
 async def dismiss_discovery(
     discovery_id: uuid.UUID,
-    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     reason: str | None = None,
     service: DiscoveryService = Depends(_get_discovery_service),
 ) -> ShadowAIDiscoveryResponse:
@@ -259,7 +244,7 @@ async def dismiss_discovery(
 
     Args:
         discovery_id: Discovery UUID.
-        request: FastAPI request for tenant extraction.
+        tenant: Authenticated tenant context from JWT.
         reason: Optional reason for dismissal.
         service: DiscoveryService dependency.
 
@@ -270,7 +255,7 @@ async def dismiss_discovery(
         HTTPException 404: If discovery not found.
         HTTPException 409: If discovery is already in a terminal state.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
 
     try:
         discovery = await service.dismiss_discovery(discovery_id, tenant_id, reason)
@@ -297,19 +282,19 @@ async def dismiss_discovery(
     ),
 )
 async def get_risk_report(
-    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     service: RiskAssessorService = Depends(_get_risk_service),
 ) -> RiskReportResponse:
     """Generate an aggregated risk report for the current tenant.
 
     Args:
-        request: FastAPI request for tenant extraction.
+        tenant: Authenticated tenant context from JWT.
         service: RiskAssessorService dependency.
 
     Returns:
         RiskReportResponse with breach cost estimates and top risks.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
     report = await service.get_risk_report(tenant_id)
 
     by_level_raw: dict[str, int] = report.get("by_risk_level", {})
@@ -359,7 +344,7 @@ async def get_risk_report(
 async def start_migration(
     tool_id: uuid.UUID,
     request_body: MigrationStartRequest,
-    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     service: MigrationService = Depends(_get_migration_service),
 ) -> MigrationPlanResponse:
     """Start a migration workflow for a shadow AI discovery.
@@ -367,7 +352,7 @@ async def start_migration(
     Args:
         tool_id: Discovery UUID (the shadow AI tool to migrate away from).
         request_body: Migration parameters including governed alternative.
-        request: FastAPI request for tenant extraction.
+        tenant: Authenticated tenant context from JWT.
         service: MigrationService dependency.
 
     Returns:
@@ -377,7 +362,7 @@ async def start_migration(
         HTTPException 404: If discovery not found.
         HTTPException 409: If discovery is already migrated or dismissed.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
 
     try:
         plan = await service.start_migration(
@@ -416,21 +401,21 @@ async def start_migration(
     ),
 )
 async def get_dashboard(
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
     days: int = 30,
-    request: Request = ...,  # type: ignore[assignment]
     service: DashboardService = Depends(_get_dashboard_service),
 ) -> DashboardResponse:
     """Retrieve the usage analytics dashboard for the current tenant.
 
     Args:
+        tenant: Authenticated tenant context from JWT.
         days: Number of days to include in the aggregation (default 30).
-        request: FastAPI request for tenant extraction.
         service: DashboardService dependency.
 
     Returns:
         DashboardResponse with usage trends and risk distribution.
     """
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = uuid.UUID(tenant.tenant_id)
     stats = await service.get_dashboard(tenant_id=tenant_id, days=min(days, 365))
 
     top_tools_raw: list[dict[str, object]] = stats.get("top_tools", [])
